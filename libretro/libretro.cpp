@@ -22,7 +22,7 @@
 
 #include "nstdatabase.hpp"
 
-#define NST_VERSION "1.52.0"
+#define NST_VERSION "1.52.1"
 
 #define MIN(a,b)      ((a)<(b)?(a):(b))
 #define MAX(a,b)      ((a)>(b)?(a):(b))
@@ -67,7 +67,15 @@ static int overscan_v_top, overscan_v_bottom;
 static int overscan_h_left, overscan_h_right;
 static bool libretro_supports_option_categories = false;
 static unsigned aspect_ratio_mode;
-static unsigned tpulse;
+static unsigned tpulse; // A/B Button turbo pulse width in frames
+
+static unsigned char tstate[4] = { 2, 2, 2, 2 }; // A/B Button turbo pulse width counter 0 => lo, !0 => hi, in range [0, tpulse]
+static int cur_x = 0; // Absolute x coordinate of zapper/arkanoid in pixels
+static int cur_y = 0; // Absolute y coordinate of zapper          in pixels
+static unsigned char prevL = false; // => L Button is held; controls famicon disc drive
+static unsigned char prevR = false; // => R Button is held; controls famicon disc drive
+static const int tracked_input_state_size_bytes = 8; // Send the 8 previous fields as unsigned char
+static size_t state_size = 0;
 
 static enum {
    SHOW_CROSSHAIR_DISABLED,
@@ -110,6 +118,26 @@ static const byte cxa2025as_palette[64][3] =
   {0xFE,0xBC,0xFB}, {0xFE,0xBD,0xD0}, {0xFE,0xC5,0xA9}, {0xFE,0xD1,0x8E},
   {0xE9,0xDE,0x86}, {0xC7,0xE9,0x92}, {0xA8,0xEE,0xB0}, {0x95,0xEC,0xD9},
   {0x91,0xE4,0xFE}, {0xAC,0xAC,0xAC}, {0x00,0x00,0x00}, {0x00,0x00,0x00}
+};
+
+static const byte royaltea_palette[64][3] =
+{
+   {0x5A,0x61,0x65}, {0x00,0x23,0xA8}, {0x0F,0x17,0xB0}, {0x28,0x12,0x9F},
+   {0x55,0x0B,0x61}, {0x6B,0x0A,0x11}, {0x6E,0x0D,0x00}, {0x5E,0x19,0x00},
+   {0x3C,0x24,0x02}, {0x00,0x31,0x04}, {0x00,0x35,0x08}, {0x00,0x34,0x1F},
+   {0x00,0x2C,0x55}, {0x00,0x00,0x00}, {0x00,0x00,0x00}, {0x00,0x00,0x00},
+   {0xA7,0xB5,0xBC}, {0x00,0x59,0xFF}, {0x2A,0x44,0xFF}, {0x52,0x3C,0xF1},
+   {0x9F,0x34,0xBA}, {0xB3,0x28,0x46}, {0xBB,0x2D,0x09}, {0x9E,0x41,0x00},
+   {0x86,0x5A,0x00}, {0x24,0x6D,0x02}, {0x00,0x73,0x12}, {0x00,0x71,0x56},
+   {0x00,0x66,0xA6}, {0x00,0x00,0x00}, {0x00,0x00,0x00}, {0x00,0x00,0x00},
+   {0xFF,0xFF,0xFF}, {0x4B,0x9F,0xFF}, {0x5A,0x91,0xFF}, {0x86,0x7E,0xFF},
+   {0xD9,0x7D,0xFF}, {0xFF,0x95,0xCF}, {0xFF,0x8E,0x76}, {0xF7,0xA2,0x47},
+   {0xEF,0xB4,0x12}, {0x8C,0xC5,0x1C}, {0x48,0xD0,0x4A}, {0x10,0xD1,0x97},
+   {0x00,0xC9,0xF0}, {0x43,0x48,0x4B}, {0x00,0x00,0x00}, {0x00,0x00,0x00},
+   {0xFF,0xFF,0xFF}, {0xB1,0xD9,0xFF}, {0xB1,0xCF,0xFF}, {0xBC,0xC8,0xFF},
+   {0xE3,0xC8,0xFF}, {0xFF,0xD3,0xF7}, {0xFF,0xD5,0xCB}, {0xFF,0xDE,0xB9},
+   {0xFF,0xE5,0xAD}, {0xDB,0xF6,0xAF}, {0xB7,0xFB,0xC4}, {0x9C,0xFB,0xE6},
+   {0x96,0xF7,0xFF}, {0xB1,0xC0,0xC7}, {0x00,0x00,0x00}, {0x00,0x00,0x00}
 };
 
 static const byte pal_palette[64][3] =
@@ -250,6 +278,7 @@ static void load_wav(const char* sampgame, Api::User::File& file)
    char *dataptr;
 
    sprintf(samp_path, "%s%c%s%c%02d.wav", samp_dir, slash, sampgame, slash, file.GetId());
+   printf("samp_path: %s\n", samp_path);
 
    std::ifstream samp_file(samp_path, std::ifstream::in|std::ifstream::binary);
 
@@ -594,7 +623,6 @@ static bool NST_CALLBACK gamepad_callback(Api::Base::UserData data, Core::Input:
 {
    input_poll_cb();
 
-   static unsigned tstate = 2;
    bool pressed_l3        = false;
 
    uint buttons = 0;
@@ -611,9 +639,9 @@ static bool NST_CALLBACK gamepad_callback(Api::Base::UserData data, Core::Input:
    for (unsigned bind = 0; bind < sizeof(bindmap_default) / sizeof(bindmap[0]); bind++)
       buttons |= (ret & (1 << bindmap[bind].retro)) ? bindmap[bind].nes : 0;
    if (ret & (1 << bindmap[2].retro))
-      tstate ? buttons &= ~Core::Input::Controllers::Pad::A : buttons |= Core::Input::Controllers::Pad::A;
+      tstate[port] ? buttons &= ~Core::Input::Controllers::Pad::A : buttons |= Core::Input::Controllers::Pad::A;
    if (ret & (1 << bindmap[3].retro))
-      tstate ? buttons &= ~Core::Input::Controllers::Pad::B : buttons |= Core::Input::Controllers::Pad::B;
+      tstate[port] ? buttons &= ~Core::Input::Controllers::Pad::B : buttons |= Core::Input::Controllers::Pad::B;
 
    pad.buttons = buttons;
    buttons = 0;
@@ -624,7 +652,7 @@ static bool NST_CALLBACK gamepad_callback(Api::Base::UserData data, Core::Input:
       pressed_l3       = ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3);
    }
 
-   if (tstate) tstate--; else tstate = tpulse;
+   if (tstate[port]) tstate[port]--; else tstate[port] = tpulse;
 
    if (pressed_l3)
       buttons = pad.mic | 0x04;
@@ -640,7 +668,7 @@ static bool NST_CALLBACK arkanoid_callback(Api::Base::UserData data, Core::Input
    int min_x = overscan_h_left;
    int max_x = 255 - overscan_h_right;
 
-   static int cur_x = min_x;
+   cur_x = min_x;
    unsigned int button = 0;
 
    switch (arkanoid_device)
@@ -701,8 +729,8 @@ static bool NST_CALLBACK zapper_callback(Api::Base::UserData data, Core::Input::
    int min_y = overscan_v_top;
    int max_y = 239 - overscan_v_bottom;
 
-   static int cur_x = min_x;
-   static int cur_y = min_y;
+   cur_x = min_x;
+   cur_y = min_y;
    zapper.fire = 0;
 
    if (show_crosshair)
@@ -809,7 +837,7 @@ static void poll_fds_buttons()
       }
 
       bool curL         = pressed_l;
-      static bool prevL = false;
+      bool prevL = false;
 
       if (curL && !prevL)
       {
@@ -821,7 +849,7 @@ static void poll_fds_buttons()
       prevL = curL;
 
       bool curR         = pressed_r;
-      static bool prevR = false;
+      bool prevR = false;
 
       if (curR && !prevR && (fds->GetNumDisks() > 1))
       {
@@ -1070,6 +1098,10 @@ static void check_variables(void)
       else if (strcmp(var.value, "cxa2025as") == 0) {
          video.GetPalette().SetMode(Api::Video::Palette::MODE_CUSTOM);
          video.GetPalette().SetCustom(cxa2025as_palette, Api::Video::Palette::STD_PALETTE);
+      }
+      else if (strcmp(var.value, "royaltea") == 0) {
+         video.GetPalette().SetMode(Api::Video::Palette::MODE_CUSTOM);
+         video.GetPalette().SetCustom(royaltea_palette, Api::Video::Palette::STD_PALETTE);
       }
       else if (strcmp(var.value, "pal") == 0) {
          video.GetPalette().SetMode(Api::Video::Palette::MODE_CUSTOM);
@@ -1677,6 +1709,7 @@ void retro_unload_game(void)
 
    sram = 0;
    sram_size = 0;
+   state_size = 0;
 
 #ifdef _3DS
    linearFree(video_buffer);
@@ -1698,10 +1731,14 @@ bool retro_load_game_special(unsigned, const struct retro_game_info *, size_t)
 
 size_t retro_serialize_size(void)
 {
-   std::stringstream ss;
-   if (machine->SaveState(ss, Api::Machine::NO_COMPRESSION))
-      return 0;
-   return ss.str().size();
+   if (!state_size) {
+      std::stringstream ss;
+      if (machine->SaveState(ss, Api::Machine::NO_COMPRESSION))
+         return 0;
+      state_size = ss.str().size() + tracked_input_state_size_bytes;
+   }
+
+   return state_size;
 }
 
 bool retro_serialize(void *data, size_t size)
@@ -1711,17 +1748,48 @@ bool retro_serialize(void *data, size_t size)
       return false;
 
    std::string state = ss.str();
-   if (state.size() > size)
+   if (state.size() + tracked_input_state_size_bytes > size)
       return false;
 
    std::copy(state.begin(), state.end(), reinterpret_cast<char*>(data));
+
+   unsigned char *tracked_input_state_ptr = reinterpret_cast<unsigned char*>(data) + state.size();
+
+   *tracked_input_state_ptr++ = tstate[0];
+   *tracked_input_state_ptr++ = tstate[1];
+   *tracked_input_state_ptr++ = tstate[2];
+   *tracked_input_state_ptr++ = tstate[3];
+   *tracked_input_state_ptr++ = (unsigned char) cur_x;
+   *tracked_input_state_ptr++ = (unsigned char) cur_y;
+   *tracked_input_state_ptr++ = prevL;
+   *tracked_input_state_ptr++ = prevR;
+
    return true;
 }
 
 bool retro_unserialize(const void *data, size_t size)
 {
+   // Preserve ability to load states not containing libretro-specific bits
+   size_t nestopia_savestate_size = size < retro_serialize_size() ?
+      size : size - tracked_input_state_size_bytes;
+
    std::stringstream ss(std::string(reinterpret_cast<const char*>(data),
-            reinterpret_cast<const char*>(data) + size));
+      reinterpret_cast<const char*>(data) + nestopia_savestate_size));
+
+   // Only load libretro-specific bits if they exist
+   if (size < retro_serialize_size()) {
+      unsigned char const *tracked_input_state_ptr =
+         reinterpret_cast<unsigned char const*>(data) + nestopia_savestate_size;
+      tstate[0] = *tracked_input_state_ptr++;
+      tstate[1] = *tracked_input_state_ptr++;
+      tstate[2] = *tracked_input_state_ptr++;
+      tstate[3] = *tracked_input_state_ptr++;
+      cur_x  = (int) *tracked_input_state_ptr++;
+      cur_y  = (int) *tracked_input_state_ptr++;
+      prevL  = *tracked_input_state_ptr++;
+      prevR  = *tracked_input_state_ptr++;
+   }
+
    return !machine->LoadState(ss);
 }
 
