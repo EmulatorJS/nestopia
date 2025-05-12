@@ -138,6 +138,7 @@
 #include "NstBoardBmc31in1.hpp"
 #include "NstBoardBmc35in1.hpp"
 #include "NstBoardBmc36in1.hpp"
+#include "NstBoardBmc60311c.hpp"
 #include "NstBoardBmc64in1.hpp"
 #include "NstBoardBmc72in1.hpp"
 #include "NstBoardBmc76in1.hpp"
@@ -805,6 +806,7 @@ namespace Nes
 					{ "BMC-190IN1",                  Type::BMC_GOLDEN_190IN1        },
 					{ "BMC-42IN1RESETSWITCH",        Type::BMC_SUPER_22GAMES        },
 					{ "BMC-64IN1NOREPEAT",           Type::BMC_Y2K_64IN1            },
+					{ "BMC-60311C",                  Type::BMC_60311C               },
 					{ "BMC-70IN1",                   Type::BMC_GAME_800IN1          },
 					{ "BMC-70IN1B",                  Type::BMC_GAME_800IN1          },
 					{ "BMC-8157",                    Type::BMC_8157                 },
@@ -1007,6 +1009,7 @@ namespace Nes
 					{ "NES-ELROM",                   Type::STD_ELROM                },
 					{ "NES-ETROM",                   Type::STD_ETROM                },
 					{ "NES-EVENT",                   Type::CUSTOM_EVENT             },
+					{ "NES-EVENT2",                  Type::CUSTOM_EVENT2            },
 					{ "NES-EWROM",                   Type::STD_EWROM                },
 					{ "NES-FJROM",                   Type::STD_FJROM                },
 					{ "NES-FKROM",                   Type::STD_FKROM                },
@@ -1298,6 +1301,7 @@ namespace Nes
 					case 155:
 
 						chips.Add(L"MMC1A");
+						// fallthrough
 
 					case 1:
 
@@ -1434,6 +1438,7 @@ namespace Nes
 
 						if (!this->prg.PinsDefined())
 							return false;
+						// fallthrough
 
 					case 3:
 
@@ -1709,6 +1714,7 @@ namespace Nes
 							id = Type::BANDAI_LZ93D50_24C02;
 							break;
 						}
+						// fallthrough
 
 					case 153:
 
@@ -3415,6 +3421,12 @@ namespace Nes
 						id = Type::BENSHENG_BS5;
 						break;
 
+					case 289:
+
+						name = "BMC-60311C";
+						id = Type::BMC_60311C;
+						break;
+
 					case 298:
 
 						name = "UNL-TF1201";
@@ -3523,6 +3535,12 @@ namespace Nes
 						id = Type::KAISER_KS7010;
 						break;
 
+					case 555:
+
+						name = "EVENT2";
+						id = Type::CUSTOM_EVENT2;
+						break;
+
 					default:
 
 						return false;
@@ -3618,6 +3636,7 @@ namespace Nes
 					case Type::CUSTOM_B4                  : return new TxRom(c);
 					case Type::CUSTOM_BTR                 : return new JxRom(c);
 					case Type::CUSTOM_EVENT               : return new Boards::Event(c);
+					case Type::CUSTOM_EVENT2              : return new Boards::Event2(c);
 					case Type::CUSTOM_FFE3                :
 					case Type::CUSTOM_FFE4                :
 					case Type::CUSTOM_FFE8                : return new Ffe(c);
@@ -3669,6 +3688,7 @@ namespace Nes
 					case Type::BMC_72IN1                  : return new Bmc::B72in1(c);
 					case Type::BMC_76IN1                  :
 					case Type::BMC_SUPER_42IN1            : return new Bmc::B76in1(c);
+					case Type::BMC_60311C                 : return new Bmc::B60311c(c);
 					case Type::BMC_8157                   : return new Bmc::B8157(c);
 					case Type::BMC_9999999IN1             : return new Bmc::B9999999in1(c);
 					case Type::BMC_FAMILY_4646B           : return new Bmc::Family4646B(c);

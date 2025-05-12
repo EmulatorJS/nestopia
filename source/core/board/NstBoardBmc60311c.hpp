@@ -2,7 +2,7 @@
 //
 // Nestopia - NES/Famicom emulator written in C++
 //
-// Copyright (C) 2003-2008 Martin Freij
+// Copyright (C) 2025 Rupert Carmichael
 //
 // This file is part of Nestopia.
 //
@@ -22,8 +22,8 @@
 //
 ////////////////////////////////////////////////////////////////////////////////////////
 
-#ifndef NST_DIPSWITCHES_H
-#define NST_DIPSWITCHES_H
+#ifndef NST_BOARD_BMC_60311C_H
+#define NST_BOARD_BMC_60311C_H
 
 #ifdef NST_PRAGMA_ONCE
 #pragma once
@@ -33,21 +33,34 @@ namespace Nes
 {
 	namespace Core
 	{
-		class NST_NO_VTABLE DipSwitches
+		namespace Boards
 		{
-		protected:
+			namespace Bmc
+			{
+				class B60311c : public Board
+				{
+				public:
 
-			virtual ~DipSwitches() {}
+					explicit B60311c(const Context& c)
+					: Board(c) {}
 
-		public:
+				private:
 
-			virtual uint NumDips() const = 0;
-			virtual uint NumValues(uint) const = 0;
-			virtual cstring GetDipName(uint) const = 0;
-			virtual cstring GetValueName(uint,uint) const = 0;
-			virtual uint GetValue(uint) const = 0;
-			virtual void SetValue(uint,uint) = 0;
-		};
+					void SubReset(bool);
+					void SubSave(State::Saver&) const;
+					void SubLoad(State::Loader&,dword);
+
+					void UpdatePrg();
+
+					NES_DECL_POKE( 6000 );
+					NES_DECL_POKE( 6001 );
+					NES_DECL_POKE( 8000 );
+
+					uint regs[2];
+					uint latch;
+				};
+			}
+		}
 	}
 }
 

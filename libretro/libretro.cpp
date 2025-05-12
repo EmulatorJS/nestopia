@@ -22,7 +22,7 @@
 
 #include "nstdatabase.hpp"
 
-#define NST_VERSION "1.52.1"
+#define NST_VERSION "1.53.1"
 
 #define MIN(a,b)      ((a)<(b)?(a):(b))
 #define MAX(a,b)      ((a)>(b)?(a):(b))
@@ -63,6 +63,8 @@ static char *g_save_dir;
 static char samp_dir[256];
 static unsigned blargg_ntsc;
 static bool fds_auto_insert;
+static int arkanoid_paddle_min = 0;
+static int arkanoid_paddle_max = 255;
 static int overscan_v_top, overscan_v_bottom;
 static int overscan_h_left, overscan_h_right;
 static bool libretro_supports_option_categories = false;
@@ -83,6 +85,7 @@ static enum {
    SHOW_CROSSHAIR_ON,
 } show_crosshair;
 
+static unsigned libretro_msg_interface_version = 0;
 static bool libretro_supports_bitmasks = false;
 static bool show_advanced_av_settings = true;
 
@@ -99,26 +102,6 @@ static unsigned long sram_size;
 static bool is_pal;
 static byte custpal[64*3];
 static char slash;
-
-static const byte cxa2025as_palette[64][3] =
-{
-  {0x58,0x58,0x58}, {0x00,0x23,0x8C}, {0x00,0x13,0x9B}, {0x2D,0x05,0x85},
-  {0x5D,0x00,0x52}, {0x7A,0x00,0x17}, {0x7A,0x08,0x00}, {0x5F,0x18,0x00},
-  {0x35,0x2A,0x00}, {0x09,0x39,0x00}, {0x00,0x3F,0x00}, {0x00,0x3C,0x22},
-  {0x00,0x32,0x5D}, {0x00,0x00,0x00}, {0x00,0x00,0x00}, {0x00,0x00,0x00},
-  {0xA1,0xA1,0xA1}, {0x00,0x53,0xEE}, {0x15,0x3C,0xFE}, {0x60,0x28,0xE4},
-  {0xA9,0x1D,0x98}, {0xD4,0x1E,0x41}, {0xD2,0x2C,0x00}, {0xAA,0x44,0x00},
-  {0x6C,0x5E,0x00}, {0x2D,0x73,0x00}, {0x00,0x7D,0x06}, {0x00,0x78,0x52},
-  {0x00,0x69,0xA9}, {0x00,0x00,0x00}, {0x00,0x00,0x00}, {0x00,0x00,0x00},
-  {0xFF,0xFF,0xFF}, {0x1F,0xA5,0xFE}, {0x5E,0x89,0xFE}, {0xB5,0x72,0xFE},
-  {0xFE,0x65,0xF6}, {0xFE,0x67,0x90}, {0xFE,0x77,0x3C}, {0xFE,0x93,0x08},
-  {0xC4,0xB2,0x00}, {0x79,0xCA,0x10}, {0x3A,0xD5,0x4A}, {0x11,0xD1,0xA4},
-  {0x06,0xBF,0xFE}, {0x42,0x42,0x42}, {0x00,0x00,0x00}, {0x00,0x00,0x00},
-  {0xFF,0xFF,0xFF}, {0xA0,0xD9,0xFE}, {0xBD,0xCC,0xFE}, {0xE1,0xC2,0xFE},
-  {0xFE,0xBC,0xFB}, {0xFE,0xBD,0xD0}, {0xFE,0xC5,0xA9}, {0xFE,0xD1,0x8E},
-  {0xE9,0xDE,0x86}, {0xC7,0xE9,0x92}, {0xA8,0xEE,0xB0}, {0x95,0xEC,0xD9},
-  {0x91,0xE4,0xFE}, {0xAC,0xAC,0xAC}, {0x00,0x00,0x00}, {0x00,0x00,0x00}
-};
 
 static const byte royaltea_palette[64][3] =
 {
@@ -240,6 +223,46 @@ static const byte nes_classic_fbx_fs_palette[64][3] =
   {0xB9,0xEA,0xE9}, {0xAB,0xAB,0xAB}, {0x00,0x00,0x00}, {0x00,0x00,0x00}
 };
 
+static const byte restored_wii_vc_palette[64][3] =
+{
+  {0x66,0x66,0x66}, {0x00,0x00,0x95}, {0x10,0x00,0x8B}, {0x39,0x00,0x7D},
+  {0x5C,0x00,0x68}, {0x66,0x00,0x00}, {0x5C,0x00,0x00}, {0x39,0x18,0x00},
+  {0x22,0x37,0x00}, {0x00,0x43,0x16}, {0x00,0x43,0x00}, {0x00,0x39,0x16},
+  {0x02,0x2D,0x5E}, {0x00,0x00,0x00}, {0x00,0x00,0x00}, {0x00,0x00,0x00},
+  {0xA3,0x9E,0xA3}, {0x00,0x43,0xB9}, {0x45,0x02,0xF1}, {0x69,0x02,0xCF},
+  {0x8C,0x00,0xAC}, {0x96,0x00,0x50}, {0x96,0x2E,0x02}, {0x7E,0x42,0x00},
+  {0x5C,0x66,0x00}, {0x22,0x7D,0x02}, {0x16,0x7D,0x02}, {0x02,0x7D,0x46},
+  {0x02,0x66,0x7E}, {0x16,0x16,0x16}, {0x00,0x00,0x00}, {0x00,0x00,0x00},
+  {0xF2,0xF2,0xF2}, {0x68,0x9E,0xFF}, {0x8C,0x7B,0xFF}, {0xB9,0x70,0xFF},
+  {0xE6,0x71,0xF2}, {0xF2,0x66,0xB9}, {0xFE,0x89,0x68}, {0xCF,0x9E,0x46},
+  {0xAC,0xA0,0x3B}, {0x7E,0xBC,0x02}, {0x4E,0xC7,0x45}, {0x45,0xC7,0x7E},
+  {0x50,0xC7,0xC6}, {0x4E,0x4E,0x4E}, {0x00,0x00,0x00}, {0x00,0x00,0x00},
+  {0xFF,0xFF,0xFF}, {0xC4,0xDC,0xFE}, {0xC6,0xC7,0xF4}, {0xDB,0xC7,0xFF},
+  {0xE9,0xBD,0xFF}, {0xF2,0xC6,0xDC}, {0xF4,0xD2,0xC4}, {0xDB,0xC8,0xAE},
+  {0xDB,0xDD,0xA0}, {0xCF,0xE9,0xAE}, {0xB9,0xEA,0xAC}, {0xAE,0xDC,0xB9},
+  {0xA1,0xD2,0xC6}, {0xDE,0xDE,0xDE}, {0x00,0x00,0x00}, {0x00,0x00,0x00}
+};
+
+static const byte wii_vc_palette[64][3] =
+{
+  {0x49,0x49,0x49}, {0x00,0x00,0x6a}, {0x09,0x00,0x63}, {0x29,0x00,0x59},
+  {0x42,0x00,0x4a}, {0x49,0x00,0x00}, {0x42,0x00,0x00}, {0x29,0x11,0x00},
+  {0x18,0x27,0x00}, {0x00,0x30,0x10}, {0x00,0x30,0x00}, {0x00,0x29,0x10},
+  {0x01,0x20,0x43}, {0x00,0x00,0x00}, {0x00,0x00,0x00}, {0x00,0x00,0x00},
+  {0x74,0x71,0x74}, {0x00,0x30,0x84}, {0x31,0x01,0xac}, {0x4b,0x01,0x94},
+  {0x64,0x00,0x7b}, {0x6b,0x00,0x39}, {0x6b,0x21,0x01}, {0x5a,0x2f,0x00},
+  {0x42,0x49,0x00}, {0x18,0x59,0x01}, {0x10,0x59,0x01}, {0x01,0x59,0x32},
+  {0x01,0x49,0x5a}, {0x10,0x10,0x10}, {0x00,0x00,0x00}, {0x00,0x00,0x00},
+  {0xad,0xad,0xad}, {0x4a,0x71,0xb6}, {0x64,0x58,0xd5}, {0x84,0x50,0xe6},
+  {0xa4,0x51,0xad}, {0xad,0x49,0x84}, {0xb5,0x62,0x4a}, {0x94,0x71,0x32},
+  {0x7b,0x72,0x2a}, {0x5a,0x86,0x01}, {0x38,0x8e,0x31}, {0x31,0x8e,0x5a},
+  {0x39,0x8e,0x8d}, {0x38,0x38,0x38}, {0x00,0x00,0x00}, {0x00,0x00,0x00},
+  {0xb6,0xb6,0xb6}, {0x8c,0x9d,0xb5}, {0x8d,0x8e,0xae}, {0x9c,0x8e,0xbc},
+  {0xa6,0x87,0xbc}, {0xad,0x8d,0x9d}, {0xae,0x96,0x8c}, {0x9c,0x8f,0x7c},
+  {0x9c,0x9e,0x72}, {0x94,0xa6,0x7c}, {0x84,0xa7,0x7b}, {0x7c,0x9d,0x84},
+  {0x73,0x96,0x8d}, {0xde,0xde,0xde}, {0x00,0x00,0x00}, {0x00,0x00,0x00}
+};
+
 int crossx = 0;
 int crossy = 0;
 
@@ -283,25 +306,75 @@ static void load_wav(const char* sampgame, Api::User::File& file)
    std::ifstream samp_file(samp_path, std::ifstream::in|std::ifstream::binary);
 
    if (samp_file) {
-	   samp_file.seekg(0, samp_file.end);
-	   length = samp_file.tellg();
-	   samp_file.seekg(0, samp_file.beg);
-	   wavfile = (char*)malloc(length * sizeof(char));
-	   samp_file.read(wavfile, length);
+       samp_file.seekg(0, samp_file.end);
+       length = samp_file.tellg();
+       samp_file.seekg(0, samp_file.beg);
+       wavfile = (char*)malloc(length * sizeof(char));
+       samp_file.read(wavfile, length);
 
-	   // Check to see if it has a valid header
-	   if (memcmp(&wavfile[0x00], "RIFF", 4) != 0) { return; }
-	   if (memcmp(&wavfile[0x08], "WAVE", 4) != 0) { return; }
-	   if (memcmp(&wavfile[0x0c], &fmt, 4) != 0) { return; }
-	   if (memcmp(&wavfile[0x24], &subchunk2id, 4) != 0) { return; }
+       // Check to see if it has a valid header
+       if (memcmp(&wavfile[0x00], "RIFF", 4) != 0) { return; }
+       if (memcmp(&wavfile[0x08], "WAVE", 4) != 0) { return; }
+       if (memcmp(&wavfile[0x0c], &fmt, 4) != 0) { return; }
+       if (memcmp(&wavfile[0x24], &subchunk2id, 4) != 0) { return; }
 
-	   // Load the sample into the emulator
-	   dataptr = &wavfile[0x2c];
-	   blockalign = wavfile[0x21] << 8 | wavfile[0x20];
-	   numchannels = wavfile[0x17] << 8 | wavfile[0x16];
-	   bitspersample = wavfile[0x23] << 8 | wavfile[0x22];
-	   file.SetSampleContent(dataptr, (length - 44) / blockalign, 0, bitspersample, 44100);
-	   free(wavfile);
+       // Load the sample into the emulator
+       dataptr = &wavfile[0x2c];
+       blockalign = wavfile[0x21] << 8 | wavfile[0x20];
+       numchannels = wavfile[0x17] << 8 | wavfile[0x16];
+       bitspersample = wavfile[0x23] << 8 | wavfile[0x22];
+       file.SetSampleContent(dataptr, (length - 44) / blockalign, 0, bitspersample, 44100);
+       free(wavfile);
+   }
+}
+
+static void display_msg(enum retro_log_level level, unsigned duration, const char *str)
+{
+   if (!environ_cb)
+      return;
+
+   if (libretro_msg_interface_version >= 1)
+   {
+      struct retro_message_ext msg;
+      unsigned priority;
+
+      switch (level)
+      {
+         case RETRO_LOG_ERROR:
+            priority = 5;
+            break;
+         case RETRO_LOG_WARN:
+            priority = 4;
+            break;
+         case RETRO_LOG_INFO:
+            priority = 3;
+            break;
+         case RETRO_LOG_DEBUG:
+         default:
+            priority = 1;
+            break;
+      }
+
+      msg.msg      = str;
+      msg.duration = duration;
+      msg.priority = priority;
+      msg.level    = level;
+      msg.target   = RETRO_MESSAGE_TARGET_OSD;
+      msg.type     = RETRO_MESSAGE_TYPE_NOTIFICATION_ALT;
+      msg.progress = -1;
+
+      environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &msg);
+   }
+   else
+   {
+      float fps       = is_pal ? 50 : 60;
+      unsigned frames = (unsigned)(((float)duration * fps / 1000.0f) + 0.5f);
+      struct retro_message msg;
+
+      msg.msg    = str;
+      msg.frames = frames;
+
+      environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &msg);
    }
 }
 
@@ -393,6 +466,9 @@ void retro_init(void)
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
+
+   environ_cb(RETRO_ENVIRONMENT_GET_MESSAGE_INTERFACE_VERSION,
+      &libretro_msg_interface_version);
 
    check_system_specs();
 }
@@ -619,6 +695,22 @@ static keymap bindmap_shifted[] = {
 
 static keymap *bindmap = bindmap_default;
 
+static void NST_CALLBACK nst_cb_event(void *userdata, Api::User::Event event, const void *data) {
+   // Handle special events
+   switch (event) {
+      case Api::User::EVENT_CPU_JAM:
+         log_cb(RETRO_LOG_WARN, "Cpu: Jammed.");
+         break;
+      case Api::User::EVENT_CPU_UNOFFICIAL_OPCODE:
+         log_cb(RETRO_LOG_DEBUG, "Cpu: Unofficial Opcode %s\n", (const char*)data);
+         break;
+      case Api::User::EVENT_DISPLAY_TIMER:
+         display_msg(RETRO_LOG_INFO, 1000, (const char*)data);
+         break;
+      default: break;
+   }
+}
+
 static bool NST_CALLBACK gamepad_callback(Api::Base::UserData data, Core::Input::Controllers::Pad& pad, unsigned int port)
 {
    input_poll_cb();
@@ -668,12 +760,13 @@ static bool NST_CALLBACK arkanoid_callback(Api::Base::UserData data, Core::Input
    int min_x = overscan_h_left;
    int max_x = 255 - overscan_h_right;
 
-   cur_x = min_x;
    unsigned int button = 0;
 
    switch (arkanoid_device)
    {
       case ARKANOID_DEVICE_MOUSE:
+         min_x = arkanoid_paddle_min;
+         max_x = arkanoid_paddle_max;
          cur_x += input_state_cb(1, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_X);
          button = input_state_cb(1, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_LEFT);
          break;
@@ -729,8 +822,6 @@ static bool NST_CALLBACK zapper_callback(Api::Base::UserData data, Core::Input::
    int min_y = overscan_v_top;
    int max_y = 239 - overscan_v_bottom;
 
-   cur_x = min_x;
-   cur_y = min_y;
    zapper.fire = 0;
 
    if (show_crosshair)
@@ -837,25 +928,41 @@ static void poll_fds_buttons()
       }
 
       bool curL         = pressed_l;
-      bool prevL = false;
+      static bool prevL = false;
 
       if (curL && !prevL)
       {
-         if (!fds->IsAnyDiskInserted())
+         if (!fds->IsAnyDiskInserted()) {
             fds->InsertDisk(0, 0);
-         else if (fds->CanChangeDiskSide())
+            display_msg(RETRO_LOG_INFO, 2000, "Disk Inserted");
+         }
+         else if (fds->CanChangeDiskSide()) {
             fds->ChangeSide();
+            std::string msg = std::string("Switched to Disk ") +
+                (fds->GetCurrentDisk() == 0 ? "1" : "2") +
+                " Side " + (fds->GetCurrentDiskSide() == 0 ? "A" : "B");
+            display_msg(RETRO_LOG_INFO, 2000, msg.c_str());
+         }
       }
       prevL = curL;
 
       bool curR         = pressed_r;
-      bool prevR = false;
+      static bool prevR = false;
 
       if (curR && !prevR && (fds->GetNumDisks() > 1))
       {
          int currdisk = fds->GetCurrentDisk();
          fds->EjectDisk();
          fds->InsertDisk(!currdisk, 0);
+
+         std::string msg = std::string("Disk ") + (fds->GetCurrentDisk() ? "2" : "1");
+
+         if (fds->IsAnyDiskInserted())
+            msg += " Inserted";
+         else
+            msg += " Ejected";
+
+         display_msg(RETRO_LOG_INFO, 2000, msg.c_str());
       }
       prevR = curR;
    }
@@ -1092,12 +1199,16 @@ static void check_variables(void)
          video.GetPalette().SetMode(Api::Video::Palette::MODE_YUV);
          video.SetDecoder(Api::Video::DECODER_ALTERNATIVE);
       }
+      else if (strcmp(var.value, "cxa2025as") == 0) {
+         video.GetPalette().SetMode(Api::Video::Palette::MODE_YUV);
+         video.SetDecoder(Api::Video::DECODER_CXA2025AS_US);
+      }
+      else if (strcmp(var.value, "cxa2025as_jp") == 0) {
+         video.GetPalette().SetMode(Api::Video::Palette::MODE_YUV);
+         video.SetDecoder(Api::Video::DECODER_CXA2025AS_JP);
+      }
       else if (strcmp(var.value, "rgb") == 0) {
          video.GetPalette().SetMode(Api::Video::Palette::MODE_RGB);
-      }
-      else if (strcmp(var.value, "cxa2025as") == 0) {
-         video.GetPalette().SetMode(Api::Video::Palette::MODE_CUSTOM);
-         video.GetPalette().SetCustom(cxa2025as_palette, Api::Video::Palette::STD_PALETTE);
       }
       else if (strcmp(var.value, "royaltea") == 0) {
          video.GetPalette().SetMode(Api::Video::Palette::MODE_CUSTOM);
@@ -1122,6 +1233,14 @@ static void check_variables(void)
       else if (strcmp(var.value, "nes-classic-fbx-fs") == 0) {
          video.GetPalette().SetMode(Api::Video::Palette::MODE_CUSTOM);
          video.GetPalette().SetCustom(nes_classic_fbx_fs_palette, Api::Video::Palette::STD_PALETTE);
+      }
+      else if (strcmp(var.value, "restored-wii-vc") == 0) {
+         video.GetPalette().SetMode(Api::Video::Palette::MODE_CUSTOM);
+         video.GetPalette().SetCustom(restored_wii_vc_palette, Api::Video::Palette::STD_PALETTE);
+      }
+      else if (strcmp(var.value, "wii-vc") == 0) {
+         video.GetPalette().SetMode(Api::Video::Palette::MODE_CUSTOM);
+         video.GetPalette().SetCustom(wii_vc_palette, Api::Video::Palette::STD_PALETTE);
       }
       else if (strcmp(var.value, "raw") == 0) {
          /* outputs raw chroma/level/emphasis in the R/G/B channels
@@ -1148,6 +1267,24 @@ static void check_variables(void)
       }
    }
    
+   // https://www.nesdev.org/wiki/Arkanoid_controller
+   // There are two different Arkanoid (or Vaus) controllers.
+   // And each controller has a slightly different range of values.
+   var.key = "nestopia_arkanoid_paddle_range";
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) {
+      // Default full range that will work for both arkanoidI and arkanoidII
+      arkanoid_paddle_min = 32;
+      arkanoid_paddle_max = 166;   
+      if (strcmp(var.value, "arkanoidI") == 0) {
+         arkanoid_paddle_min = 46;
+         arkanoid_paddle_max = 166;   
+      }
+      else if (strcmp(var.value, "arkanoidII") == 0) {
+         arkanoid_paddle_min = 32;
+         arkanoid_paddle_max = 153;   
+      }
+   }
+
    var.key = "nestopia_overscan_v_top";
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) {
@@ -1191,15 +1328,15 @@ static void check_variables(void)
    var.key = "nestopia_select_adapter";
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    { 
-	   if (!strcmp(var.value, "auto")) {
-		   Api::Input(emulator).AutoSelectAdapter();
-	   }
-	   else if (!strcmp(var.value, "ntsc")) {
-		   Api::Input(emulator).ConnectAdapter(Api::Input::ADAPTER_NES);
-		}
-	   else if (!strcmp(var.value, "famicom")) {
-		   Api::Input(emulator).ConnectAdapter(Api::Input::ADAPTER_FAMICOM);
-		}
+       if (!strcmp(var.value, "auto")) {
+           Api::Input(emulator).AutoSelectAdapter();
+       }
+       else if (!strcmp(var.value, "ntsc")) {
+           Api::Input(emulator).ConnectAdapter(Api::Input::ADAPTER_NES);
+        }
+       else if (!strcmp(var.value, "famicom")) {
+           Api::Input(emulator).ConnectAdapter(Api::Input::ADAPTER_FAMICOM);
+        }
    }
 
    var.key = "nestopia_turbo_pulse";
@@ -1539,7 +1676,7 @@ bool retro_load_game(const struct retro_game_info *info)
    }
    else
    {
-      memcpy(custpal, cxa2025as_palette, sizeof(custpal));
+      memcpy(custpal, royaltea_palette, sizeof(custpal));
       if (log_cb)
          log_cb(RETRO_LOG_INFO, "custom.pal not found in system directory.\n");
    }
@@ -1658,6 +1795,8 @@ bool retro_load_game(const struct retro_game_info *info)
    Api::Input::Controllers::Paddle::callback.Set(&arkanoid_callback, NULL);
    Api::Input::Controllers::VsSystem::callback.Set(&vssystem_callback, NULL);
    Api::Input::Controllers::Zapper::callback.Set(&zapper_callback, NULL);
+
+   Api::User::eventCallback.Set(nst_cb_event, 0);
 
    machine->Power(true);
 
