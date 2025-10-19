@@ -22,7 +22,7 @@
 
 #include "nstdatabase.hpp"
 
-#define NST_VERSION "1.53.1"
+#define NST_VERSION "1.53.2"
 
 #define MIN(a,b)      ((a)<(b)?(a):(b))
 #define MAX(a,b)      ((a)>(b)?(a):(b))
@@ -102,6 +102,17 @@ static unsigned long sram_size;
 static bool is_pal;
 static byte custpal[64*3];
 static char slash;
+
+static enum {
+   FDS_SAVEFILE_SAV_UPS = 0,
+   FDS_SAVEFILE_UPS,
+   FDS_SAVEFILE_IPS,
+} fds_savefile_format;
+static bool fds_sav_extension;
+static bool fds_ups_extension;
+static bool fds_ips_extension;
+static bool fds_patch_format_ups;
+static bool fds_patch_format_ips;
 
 static const byte royaltea_palette[64][3] =
 {
@@ -420,11 +431,18 @@ static void NST_CALLBACK file_io_callback(void*, Api::User::File &file)
          break;
       case Api::User::File::LOAD_FDS:
          {
-            char base[256];
-            sprintf(base, "%s%c%s.sav", g_save_dir, slash, g_basename);
+            std::string base;
+            std::string ext;
+            if (fds_sav_extension)
+               ext = ".sav";
+            else if (fds_ups_extension)
+               ext = ".ups";
+            else if (fds_ips_extension)
+               ext = ".ips";
+            base = std::string(g_save_dir) + slash + g_basename + ext;
             if (log_cb)
-               log_cb(RETRO_LOG_INFO, "Want to load FDS sav from: %s\n", base);
-            std::ifstream in_tmp(base,std::ifstream::in|std::ifstream::binary);
+               log_cb(RETRO_LOG_INFO, "Want to load FDS savefile using %s extension from: %s\n", ext.c_str(), base.c_str());
+            std::ifstream in_tmp(base.c_str(),std::ifstream::in|std::ifstream::binary);
 
             if (!in_tmp.is_open())
                return;
@@ -434,14 +452,23 @@ static void NST_CALLBACK file_io_callback(void*, Api::User::File &file)
          break;
       case Api::User::File::SAVE_FDS:
          {
-            char base[256];
-            sprintf(base, "%s%c%s.sav", g_save_dir, slash, g_basename);
+            std::string base;
+            std::string ext;
+            if (fds_sav_extension)
+               ext = ".sav";
+            else if (fds_ups_extension)
+               ext = ".ups";
+            else if (fds_ips_extension)
+               ext = ".ips";
+            base = std::string(g_save_dir) + slash + g_basename + ext;
             if (log_cb)
-               log_cb(RETRO_LOG_INFO, "Want to save FDS sav to: %s\n", base);
-            std::ofstream out_tmp(base,std::ifstream::out|std::ifstream::binary);
+               log_cb(RETRO_LOG_INFO, "Want to save FDS savefile using %s extension to: %s\n", ext.c_str(), base.c_str());
+            std::ofstream out_tmp(base.c_str(),std::ifstream::out|std::ifstream::binary);
 
-            if (out_tmp.is_open())
+            if ((out_tmp.is_open()) && (fds_patch_format_ups))
                file.GetPatchContent(Api::User::File::PATCH_UPS, out_tmp);
+            else if ((out_tmp.is_open()) && (fds_patch_format_ips))
+               file.GetPatchContent(Api::User::File::PATCH_IPS, out_tmp);
          }
          break;
       default:
@@ -981,48 +1008,10 @@ static void check_variables(void)
    Api::Machine machine(emulator);
    Api::Video::RenderState::Filter filter;
 
-   var.key = "nestopia_arkanoid_device";
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
-   {
-      if (strcmp(var.value, "mouse") == 0)
-         arkanoid_device = ARKANOID_DEVICE_MOUSE;
-      if (strcmp(var.value, "pointer") == 0)
-         arkanoid_device = ARKANOID_DEVICE_POINTER;
-   }
+   /* System */
 
-   var.key = "nestopia_zapper_device";
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
-   {
-      if (strcmp(var.value, "lightgun") == 0)
-         zapper_device = ZAPPER_DEVICE_LIGHTGUN;
-      else if (strcmp(var.value, "mouse") == 0)
-         zapper_device = ZAPPER_DEVICE_MOUSE;
-      else if (strcmp(var.value, "pointer") == 0)
-         zapper_device = ZAPPER_DEVICE_POINTER;
-   }
-
-   var.key = "nestopia_show_crosshair";
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
-   {
-      if (strcmp(var.value, "disabled") == 0)
-         show_crosshair = SHOW_CROSSHAIR_DISABLED;
-      else
-         show_crosshair = SHOW_CROSSHAIR_OFF;
-   }
-
-   var.key = "nestopia_button_shift";
-   
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
-   {
-      if (strcmp(var.value, "disabled") == 0)
-         bindmap = bindmap_default;
-      else if (strcmp(var.value, "enabled") == 0)
-         bindmap = bindmap_shifted;
-   }
-   
-   var.key = "nestopia_favored_system";
+   var.key = "nestopia_favored_system"; // System Region
    is_pal = false;
-
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
    {
       if (strcmp(var.value, "auto") == 0)
@@ -1071,55 +1060,33 @@ static void check_variables(void)
    if (audio) delete audio;
    audio = new Api::Sound::Output(audio_buffer, is_pal ? SAMPLERATE / 50 : SAMPLERATE / 60);
 
-   var.key = "nestopia_genie_distortion";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
-   {
-      if (strcmp(var.value, "disabled") == 0)
-         sound.SetGenie(0);
-      else if (strcmp(var.value, "enabled") == 0)
-         sound.SetGenie(1);
-   }
-   
-   var.key = "nestopia_ram_power_state";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
-   {
-      if (strcmp(var.value, "0x00") == 0)
-         machine.SetRamPowerState(0);
-      else if (strcmp(var.value, "0xFF") == 0)
-         machine.SetRamPowerState(1);
-      else if (strcmp(var.value, "random") == 0)
-         machine.SetRamPowerState(2);
-   }
-
-   var.key = "nestopia_nospritelimit";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
-   {
-      if (strcmp(var.value, "disabled") == 0)
-         video.EnableUnlimSprites(false);
-      else if (strcmp(var.value, "enabled") == 0)
-         video.EnableUnlimSprites(true);
-   }
-   
-   var.key = "nestopia_overclock";
-   
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
-   {
-      if (strcmp(var.value, "1x") == 0)
-         video.EnableOverclocking(false);
-      else if (strcmp(var.value, "2x") == 0)
-         video.EnableOverclocking(true);
-   }
-   
-   var.key = "nestopia_fds_auto_insert";
-
+   var.key = "nestopia_fds_auto_insert"; // FDS Auto Insert
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
       fds_auto_insert = (strcmp(var.value, "enabled") == 0);
-   
-   var.key = "nestopia_blargg_ntsc_filter";
 
+   var.key = "nestopia_fds_savefile_format"; // FDS Savefile Format
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
+   {
+      if (strcmp(var.value, "sav_ups") == 0)
+         fds_savefile_format = FDS_SAVEFILE_SAV_UPS;
+      else if (strcmp(var.value, "ups") == 0)
+         fds_savefile_format = FDS_SAVEFILE_UPS;
+      else if (strcmp(var.value, "ips") == 0)
+         fds_savefile_format = FDS_SAVEFILE_IPS;
+
+      /* FDS savefile format checks are positioned here to allow changes at runtime.
+       * This makes it possible to convert any savefile currently in use to the preferred format.*/
+      fds_sav_extension = (fds_savefile_format == FDS_SAVEFILE_SAV_UPS);
+      fds_ups_extension = (fds_savefile_format == FDS_SAVEFILE_UPS);
+      fds_ips_extension = (fds_savefile_format == FDS_SAVEFILE_IPS);
+      fds_patch_format_ups = ((fds_savefile_format == FDS_SAVEFILE_SAV_UPS) ||
+                              (fds_savefile_format == FDS_SAVEFILE_UPS));
+      fds_patch_format_ips = (fds_savefile_format == FDS_SAVEFILE_IPS);
+   }
+
+   /* Video */
+
+   var.key = "nestopia_blargg_ntsc_filter"; // Blargg NTSC Filter
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
    {
       if (strcmp(var.value, "disabled") == 0)
@@ -1136,12 +1103,12 @@ static void check_variables(void)
 
    switch(blargg_ntsc)
    {
-      case 0:
+      case 0: // Disabled
          filter = Api::Video::RenderState::FILTER_NONE;
          video_width = Api::Video::Output::WIDTH;
          video.SetSaturation(Api::Video::DEFAULT_SATURATION);
          break;
-      case 2:
+      case 2: // Composite Video
          filter = Api::Video::RenderState::FILTER_NTSC;
          video.SetSharpness(Api::Video::DEFAULT_SHARPNESS_COMP);
          video.SetColorResolution(Api::Video::DEFAULT_COLOR_RESOLUTION_COMP);
@@ -1151,7 +1118,7 @@ static void check_variables(void)
          video.SetSaturation(Api::Video::DEFAULT_SATURATION_COMP);
          video_width = Api::Video::Output::NTSC_WIDTH;
          break;
-      case 3:
+      case 3: // S-Video
          filter = Api::Video::RenderState::FILTER_NTSC;
          video.SetSharpness(Api::Video::DEFAULT_SHARPNESS_SVIDEO);
          video.SetColorResolution(Api::Video::DEFAULT_COLOR_RESOLUTION_SVIDEO);
@@ -1161,7 +1128,7 @@ static void check_variables(void)
          video.SetSaturation(Api::Video::DEFAULT_SATURATION_SVIDEO);
          video_width = Api::Video::Output::NTSC_WIDTH;
          break;
-      case 4:
+      case 4: // RGB Scart
          filter = Api::Video::RenderState::FILTER_NTSC;
          video.SetSharpness(Api::Video::DEFAULT_SHARPNESS_RGB);
          video.SetColorResolution(Api::Video::DEFAULT_COLOR_RESOLUTION_RGB);
@@ -1171,7 +1138,7 @@ static void check_variables(void)
          video.SetSaturation(Api::Video::DEFAULT_SATURATION_RGB);
          video_width = Api::Video::Output::NTSC_WIDTH;
          break;
-     case 5:
+     case 5: // Monochrome
          filter = Api::Video::RenderState::FILTER_NTSC;
          video.SetSharpness(Api::Video::DEFAULT_SHARPNESS_MONO);
          video.SetColorResolution(Api::Video::DEFAULT_COLOR_RESOLUTION_MONO);
@@ -1182,9 +1149,8 @@ static void check_variables(void)
          video_width = Api::Video::Output::NTSC_WIDTH;
          break;
    }
-   
-   var.key = "nestopia_palette";
-   
+
+   var.key = "nestopia_palette"; // Palette
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
    {
       if (strcmp(var.value, "consumer") == 0) {
@@ -1266,68 +1232,150 @@ static void check_variables(void)
          video.GetPalette().SetCustom((const byte(*)[3])custpal, Api::Video::Palette::STD_PALETTE);
       }
    }
-   
-   // https://www.nesdev.org/wiki/Arkanoid_controller
-   // There are two different Arkanoid (or Vaus) controllers.
-   // And each controller has a slightly different range of values.
-   var.key = "nestopia_arkanoid_paddle_range";
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) {
-      // Default full range that will work for both arkanoidI and arkanoidII
-      arkanoid_paddle_min = 32;
-      arkanoid_paddle_max = 166;   
-      if (strcmp(var.value, "arkanoidI") == 0) {
-         arkanoid_paddle_min = 46;
-         arkanoid_paddle_max = 166;   
-      }
-      else if (strcmp(var.value, "arkanoidII") == 0) {
-         arkanoid_paddle_min = 32;
-         arkanoid_paddle_max = 153;   
-      }
-   }
 
-   var.key = "nestopia_overscan_v_top";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) {
+   var.key = "nestopia_overscan_v_top"; // Mask Overscan (Top Vertical)
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
       overscan_v_top = atoi(var.value);
-   }
 
-   var.key = "nestopia_overscan_v_bottom";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) {
+   var.key = "nestopia_overscan_v_bottom"; // Mask Overscan (Bottom Vertical)
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
       overscan_v_bottom = atoi(var.value);
-   }
 
-   var.key = "nestopia_overscan_h_left";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) {
+   var.key = "nestopia_overscan_h_left"; // Mask Overscan (Left Horizontal)
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
       overscan_h_left = atoi(var.value);
-   }
 
-   var.key = "nestopia_overscan_h_right";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)) {
+   var.key = "nestopia_overscan_h_right"; // Mask Overscan (Right Horizontal)
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
       overscan_h_right = atoi(var.value);
-   }
 
-   var.key = "nestopia_aspect";
-
+   var.key = "nestopia_aspect"; // Preferred Aspect Ratio
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    {
-     if (!strcmp(var.value, "ntsc"))
-       aspect_ratio_mode = 1;
-     else if (!strcmp(var.value, "pal"))
-       aspect_ratio_mode = 2;
-     else if (!strcmp(var.value, "4:3"))
-       aspect_ratio_mode = 3;
-     else if (!strcmp(var.value, "uncorrected"))
-       aspect_ratio_mode = 4;
-     else
-       aspect_ratio_mode = 0;
+      if (!strcmp(var.value, "ntsc"))
+         aspect_ratio_mode = 1;
+      else if (!strcmp(var.value, "pal"))
+         aspect_ratio_mode = 2;
+      else if (!strcmp(var.value, "4:3"))
+         aspect_ratio_mode = 3;
+      else if (!strcmp(var.value, "uncorrected"))
+         aspect_ratio_mode = 4;
+      else
+         aspect_ratio_mode = 0;
    }
-   
-   var.key = "nestopia_select_adapter";
+
+   /* Audio */
+
+   var.key = "nestopia_genie_distortion"; // Game Genie Sound Distortion
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
+   {
+      if (strcmp(var.value, "disabled") == 0)
+         sound.SetGenie(0);
+      else if (strcmp(var.value, "enabled") == 0)
+         sound.SetGenie(1);
+   }
+
+   /* "Show settings" are not required if categories are supported */
+   option_display.visible = !libretro_supports_option_categories;
+   option_display.key = "nestopia_show_advanced_av_settings";
+   environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+
+   var.key = "nestopia_show_advanced_av_settings"; // Show Advanced Audio Settings (Reopen Menu)
+   var.value = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   { 
+   {
+      bool show_advanced_av_settings_prev = show_advanced_av_settings;
+
+      show_advanced_av_settings = true;
+      if (strcmp(var.value, "disabled") == 0)
+         show_advanced_av_settings = false;
+
+      if (show_advanced_av_settings != show_advanced_av_settings_prev)
+      {
+         size_t i;
+         char av_keys[11][40] = {
+         "nestopia_audio_vol_sq1",
+         "nestopia_audio_vol_sq2",
+         "nestopia_audio_vol_tri",
+         "nestopia_audio_vol_noise",
+         "nestopia_audio_vol_dpcm",
+         "nestopia_audio_vol_fds",
+         "nestopia_audio_vol_mmc5",
+         "nestopia_audio_vol_vrc6",
+         "nestopia_audio_vol_vrc7",
+         "nestopia_audio_vol_n163",
+         "nestopia_audio_vol_s5b"
+         };
+
+         option_display.visible = show_advanced_av_settings
+                                 || libretro_supports_option_categories;
+
+         for (i = 0; i < 11; i++)
+         {
+         option_display.key = av_keys[i];
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         }
+      }
+   }
+
+   var.key = "nestopia_audio_vol_sq1"; // Square 1 Channel Volume %
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      sound.SetVolume(Api::Sound::CHANNEL_SQUARE1, atoi(var.value));
+
+   var.key = "nestopia_audio_vol_sq2"; // Square 2 Channel Volume %
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      sound.SetVolume(Api::Sound::CHANNEL_SQUARE2, atoi(var.value));
+
+   var.key = "nestopia_audio_vol_tri"; // Triangle Channel Volume %
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      sound.SetVolume(Api::Sound::CHANNEL_TRIANGLE, atoi(var.value));
+
+   var.key = "nestopia_audio_vol_noise"; // Noise Channel Volume %
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      sound.SetVolume(Api::Sound::CHANNEL_NOISE, atoi(var.value));
+
+   var.key = "nestopia_audio_vol_dpcm"; // DPCM Channel Volume %
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      sound.SetVolume(Api::Sound::CHANNEL_DPCM, atoi(var.value));
+
+   var.key = "nestopia_audio_vol_fds"; // FDS Channel Volume %
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      sound.SetVolume(Api::Sound::CHANNEL_FDS, atoi(var.value));
+
+   var.key = "nestopia_audio_vol_mmc5"; // MMC5 Channel Volume %
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      sound.SetVolume(Api::Sound::CHANNEL_MMC5, atoi(var.value));
+
+   var.key = "nestopia_audio_vol_vrc6"; // VRC6 Channel Volume %
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      sound.SetVolume(Api::Sound::CHANNEL_VRC6, atoi(var.value));
+
+   var.key = "nestopia_audio_vol_vrc7"; // VRC7 Channel Volume %
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      sound.SetVolume(Api::Sound::CHANNEL_VRC7, atoi(var.value));
+
+   var.key = "nestopia_audio_vol_n163"; // N163 Channel Volume %
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      sound.SetVolume(Api::Sound::CHANNEL_N163, atoi(var.value));
+
+   var.key = "nestopia_audio_vol_s5b"; // S5B Channel Volume %
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      sound.SetVolume(Api::Sound::CHANNEL_S5B, atoi(var.value));
+
+   var.key = "nestopia_audio_type"; // Audio output
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
+   {
+      if (strcmp(var.value, "mono") == 0)
+         sound.SetSpeaker(Api::Sound::SPEAKER_MONO);
+      else
+         sound.SetSpeaker(Api::Sound::SPEAKER_STEREO);
+   }
+
+   /* Input */
+
+   var.key = "nestopia_select_adapter"; // 4 Player Adapter
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
        if (!strcmp(var.value, "auto")) {
            Api::Input(emulator).AutoSelectAdapter();
        }
@@ -1339,13 +1387,71 @@ static void check_variables(void)
         }
    }
 
-   var.key = "nestopia_turbo_pulse";
+   var.key = "nestopia_button_shift"; // Shift Buttons Clockwise
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
+   {
+      if (strcmp(var.value, "disabled") == 0)
+         bindmap = bindmap_default;
+      else if (strcmp(var.value, "enabled") == 0)
+         bindmap = bindmap_shifted;
+   }
 
+   var.key = "nestopia_arkanoid_device"; // Arkanoid Device
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
+   {
+      if (strcmp(var.value, "mouse") == 0)
+         arkanoid_device = ARKANOID_DEVICE_MOUSE;
+      if (strcmp(var.value, "pointer") == 0)
+         arkanoid_device = ARKANOID_DEVICE_POINTER;
+   }
+
+   // https://www.nesdev.org/wiki/Arkanoid_controller
+   // There are two different Arkanoid (or Vaus) controllers.
+   // And each controller has a slightly different range of values.
+   var.key = "nestopia_arkanoid_paddle_range"; // Arkanoid Paddle Range
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
+   {
+      // Default full range that will work for both arkanoidI and arkanoidII
+      arkanoid_paddle_min = 32;
+      arkanoid_paddle_max = 166;
+      if (strcmp(var.value, "arkanoidI") == 0)
+      {
+         arkanoid_paddle_min = 46;
+         arkanoid_paddle_max = 166;
+      }
+      else if (strcmp(var.value, "arkanoidII") == 0)
+      {
+         arkanoid_paddle_min = 32;
+         arkanoid_paddle_max = 153;
+      }
+   }
+
+   var.key = "nestopia_zapper_device"; // Zapper Device
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
+   {
+      if (strcmp(var.value, "lightgun") == 0)
+         zapper_device = ZAPPER_DEVICE_LIGHTGUN;
+      else if (strcmp(var.value, "mouse") == 0)
+         zapper_device = ZAPPER_DEVICE_MOUSE;
+      else if (strcmp(var.value, "pointer") == 0)
+         zapper_device = ZAPPER_DEVICE_POINTER;
+   }
+
+   var.key = "nestopia_show_crosshair"; // Show Crosshair
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
+   {
+      if (strcmp(var.value, "disabled") == 0)
+         show_crosshair = SHOW_CROSSHAIR_DISABLED;
+      else
+         show_crosshair = SHOW_CROSSHAIR_OFF;
+   }
+
+   var.key = "nestopia_turbo_pulse"; // Turbo Pulse Speed
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
       tpulse = atoi(var.value);
-   
+
    pitch = video_width * 4;
-   
+
    renderState.filter = filter;
    renderState.width = video_width;
    renderState.height = Api::Video::Output::HEIGHT;
@@ -1359,140 +1465,37 @@ static void check_variables(void)
    retro_get_system_av_info(&av_info);
    environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &av_info);
 
-   var.key = "nestopia_audio_vol_sq1";
+   /* Emulation Hacks */
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      sound.SetVolume(Api::Sound::CHANNEL_SQUARE1, atoi(var.value));
-   }
-
-   var.key = "nestopia_audio_vol_sq2";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      sound.SetVolume(Api::Sound::CHANNEL_SQUARE2, atoi(var.value));
-   }
-   
-   var.key = "nestopia_audio_vol_tri";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      sound.SetVolume(Api::Sound::CHANNEL_TRIANGLE, atoi(var.value));
-   }
-   
-   var.key = "nestopia_audio_vol_noise";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      sound.SetVolume(Api::Sound::CHANNEL_NOISE, atoi(var.value));
-   }
-   
-   var.key = "nestopia_audio_vol_dpcm";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      sound.SetVolume(Api::Sound::CHANNEL_DPCM, atoi(var.value));
-   }
-   
-   var.key = "nestopia_audio_vol_fds";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      sound.SetVolume(Api::Sound::CHANNEL_FDS, atoi(var.value));
-   }
-   
-   var.key = "nestopia_audio_vol_mmc5";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      sound.SetVolume(Api::Sound::CHANNEL_MMC5, atoi(var.value));
-   }
-   
-   var.key = "nestopia_audio_vol_vrc6";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      sound.SetVolume(Api::Sound::CHANNEL_VRC6, atoi(var.value));
-   }
-   
-   var.key = "nestopia_audio_vol_vrc7";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      sound.SetVolume(Api::Sound::CHANNEL_VRC7, atoi(var.value));
-   }
-
-   var.key = "nestopia_audio_vol_n163";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      sound.SetVolume(Api::Sound::CHANNEL_N163, atoi(var.value));
-   }
-   
-   var.key = "nestopia_audio_vol_s5b";
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      sound.SetVolume(Api::Sound::CHANNEL_S5B, atoi(var.value));
-   }
-
-   var.key = "nestopia_audio_type";
+   var.key = "nestopia_nospritelimit"; // Remove Sprite Limit
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
    {
-      if (strcmp(var.value, "mono") == 0)
-      {
-         sound.SetSpeaker(Api::Sound::SPEAKER_MONO);
-      }
-      else
-      {
-         sound.SetSpeaker(Api::Sound::SPEAKER_STEREO);
-      }
+      if (strcmp(var.value, "disabled") == 0)
+         video.EnableUnlimSprites(false);
+      else if (strcmp(var.value, "enabled") == 0)
+         video.EnableUnlimSprites(true);
    }
 
-  /* "Show settings" are not required if categories are supported */
-  option_display.visible = !libretro_supports_option_categories;
-  option_display.key = "nestopia_show_advanced_av_settings";
-  environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+   var.key = "nestopia_overclock"; // CPU Speed (Overclock)
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
+   {
+      if (strcmp(var.value, "1x") == 0)
+         video.EnableOverclocking(false);
+      else if (strcmp(var.value, "2x") == 0)
+         video.EnableOverclocking(true);
+   }
 
-  var.key = "nestopia_show_advanced_av_settings";
-  
-  var.value = NULL;
-  if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-  {
-    bool show_advanced_av_settings_prev = show_advanced_av_settings;
+   var.key = "nestopia_ram_power_state"; // RAM Power-on State
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
+   {
+      if (strcmp(var.value, "0x00") == 0)
+         machine.SetRamPowerState(0);
+      else if (strcmp(var.value, "0xFF") == 0)
+         machine.SetRamPowerState(1);
+      else if (strcmp(var.value, "random") == 0)
+         machine.SetRamPowerState(2);
+   }
 
-    show_advanced_av_settings = true;
-    if (strcmp(var.value, "disabled") == 0)
-      show_advanced_av_settings = false;
-
-    if (show_advanced_av_settings != show_advanced_av_settings_prev)
-    {
-      size_t i;
-      char av_keys[11][40] = {
-        "nestopia_audio_vol_sq1",
-        "nestopia_audio_vol_sq2",
-        "nestopia_audio_vol_tri",
-        "nestopia_audio_vol_noise",
-        "nestopia_audio_vol_dpcm",
-        "nestopia_audio_vol_fds",
-        "nestopia_audio_vol_mmc5",
-        "nestopia_audio_vol_vrc6",
-        "nestopia_audio_vol_vrc7",
-        "nestopia_audio_vol_n163",
-        "nestopia_audio_vol_s5b"
-      };
-
-      option_display.visible = show_advanced_av_settings
-                               || libretro_supports_option_categories;
-
-      for (i = 0; i < 11; i++)
-      {
-        option_display.key = av_keys[i];
-        environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-      }
-    }
-  }
-  
 }
 
 void retro_run(void)
@@ -1504,7 +1507,7 @@ void retro_run(void)
       draw_crosshair(crossx, crossy);
    
    unsigned frames = is_pal ? SAMPLERATE / 50 : SAMPLERATE / 60;
-   
+
    bool updated = false;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
    {
@@ -1514,27 +1517,26 @@ void retro_run(void)
       video = new Api::Video::Output(video_buffer, video_width * sizeof(uint32_t));
    }
 
+   video->pixels = video_buffer;
    int dif = blargg_ntsc ? 9 : 4;
 
-   // Absolute mess of inline if statements...
-   video_cb(video_buffer + ((blargg_ntsc ? Api::Video::Output::NTSC_WIDTH : Api::Video::Output::WIDTH) * overscan_v_top) + ((overscan_h_left * dif) / 4) + 0,
-         video_width - (((overscan_h_left + overscan_h_right) * dif) / 4),
-         Api::Video::Output::HEIGHT - (overscan_v_top + overscan_v_bottom),
-         pitch);
+   size_t vboffset = ((blargg_ntsc ? Api::Video::Output::NTSC_WIDTH : Api::Video::Output::WIDTH) * overscan_v_top) +
+      ((overscan_h_left * dif) / 4);
+
+   video_cb(video_buffer + vboffset,
+      video_width - (((overscan_h_left + overscan_h_right) * dif) / 4),
+      Api::Video::Output::HEIGHT - (overscan_v_top + overscan_v_bottom),
+      pitch);
 
    // Use audio buffer untouched for stereo, duplicate samples for mono
-   if (Api::Sound(emulator).GetSpeaker() == Api::Sound::SPEAKER_MONO)
+   if (Api::Sound(emulator).GetSpeaker() == Api::Sound::SPEAKER_MONO) 
    {
       for (unsigned i = 0; i < frames; i++)
-      {
-         audio_stereo_buffer[(i << 1) + 0] = audio_stereo_buffer[(i << 1) + 1] = audio_buffer[i];
-      }
+         audio_stereo_buffer[i << 1] = audio_stereo_buffer[(i << 1) + 1] = audio_buffer[i];
       audio_batch_cb(audio_stereo_buffer, frames);
    }
    else
-   {
       audio_batch_cb(audio_buffer, frames);
-   }
 }
 
 static void extract_basename(char *buf, const char *path, size_t size)

@@ -102,12 +102,11 @@ namespace Nes
 		Ppu::Ppu(Cpu& c)
 		:
 		cpu    (c),
-		output (NULL),
 		model  (PPU_RP2C02),
 		rgbMap (NULL),
-		yuvMap (NULL)
+		yuvMap (NULL),
+		output (screen.pixels)
 		{
-			output = Output(screen.pixels);
 			cycles.one = PPU_RP2C02_CC;
 			overclocked = false;
 			PowerOff();
@@ -882,7 +881,7 @@ namespace Nes
 			Cycle curCyc = cpu.GetCycles();
 			for (uint i = 0; i < 5; ++i)
 			{
-				if ((curCyc - decay.timestamp[i]) < 24576)
+				if ((curCyc - decay.timestamp[i]) < 6144)
 					mask |= (1 << i);
 			}
 
@@ -1070,20 +1069,21 @@ namespace Nes
 
 			if ((address & 0x3F00) == 0x3F00) // Palette
 			{
+				if (fastread)
+				{
+					io.latch = cache;
+				}
 				io.latch = (io.latch & 0xC0) | (palette.ram[address & 0x1F] & Coloring());
 				mask = 0x3F;
 			}
 			else // Non-Palette
 			{
-				io.latch = io.buffer;
+				io.latch = fastread ? cache : io.buffer;
 			}
 
 			UpdateDecay(mask);
 
 			io.buffer = (address >= 0x2000 ? nmt.FetchName( address ) : chr.FetchPattern( address ));
-
-			if (fastread)
-				io.latch = cache;
 
 			return io.latch;
 		}
@@ -1096,7 +1096,7 @@ namespace Nes
 
 		NES_PEEK(Ppu,2xxx)
 		{
-			if ((cpu.GetCycles() - decay.timestamp[0]) > 24576)
+			if ((cpu.GetCycles() - decay.timestamp[0]) > 6144)
 				return 0;
 
 			return io.latch;
